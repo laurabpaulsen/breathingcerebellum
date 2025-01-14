@@ -1,5 +1,4 @@
 """
-
 NOTES: do we want to record button presses outside of the target window? Sanity check for the experiment? 
 """
 
@@ -26,6 +25,7 @@ class Experiment:
                 "response/left": 1000, "response/right": 1000,
             },
             QUEST_target: float = 0.75,
+            QUEST_start_val = 2,
             trigger_duration = 0.001, 
             reset_QUEST: Union[int, bool] = False, # how many blocks before resetting QUEST
             ISI_adjustment_factor: float = 0.1,
@@ -55,10 +55,10 @@ class Experiment:
         }
         
         # QUEST parameters
-        self.QUEST_start_val = 2
+        self.QUEST_start_val = QUEST_start_val 
+        self.intensities =  {"salient": 4, "weak": self.QUEST_start_val} # NOTE: do we want to reset QUEST with the startvalue or start from a percentage of the weak intensity stimulation?
         self.QUEST_target = QUEST_target 
         self.QUEST_reset()
-        self.intensities =  {"salient": 4, "weak": None}
         self.update_weak_intensity()
 
     def setup_experiment(self):
@@ -201,13 +201,10 @@ class Experiment:
                         if trial["reset_QUEST"]:
                             self.QUEST_reset()
                             print("QUEST has been reset")
+                            self.update_weak_intensity()
 
             # Reset the target flag after the ISI
             self.target_active = False
-
-
-
-
 
 
     def raise_and_lower_trigger(self, trigger):
@@ -263,10 +260,7 @@ class Experiment:
 
     def update_weak_intensity(self):
         """
-        Update the intensities based on the QUEST procedure  
-        - PLACEHOLDER: currently just checks if the proportion of correct responses is above the target -> how do we actually want to implement QUEST?
-            - can also get negative now... 
-            - also, do we want to only include weak correct/incorrect? or also omis correct/incorrect?
+        Update the weak intensity based on the QUEST procedure!
         """
         self.intensities["weak"] = self.QUEST.next()
 
