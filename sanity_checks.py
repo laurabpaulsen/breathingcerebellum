@@ -6,23 +6,24 @@ import pandas as pd
 def plot_intensity(df):
     fig, ax = plt.subplots(1, 1, figsize = (10, 6), dpi = 300)
 
-    df_weak = df[df["event_type"]== "target/weak"]
-    ax.plot(df_weak["time"], df_weak["intensity"])
-    
-    
-    
+
     # correct
     correct= df[df["correct"] == 1]
-    ax.scatter(correct["time"], correct["intensity"], c = "green", label = "correct")
+    ax.scatter(correct["time"], correct["intensity"], c = "green", label = "correct response", s = 7)
 
     #incorrect 
     incorrect = df[df["correct"] == 0]
-    ax.scatter(incorrect["time"], incorrect["intensity"], c = "red", label = "incorrect")
+    ax.scatter(incorrect["time"], incorrect["intensity"], c = "red", label = "incorrect incorrect", s = 7)
+
+    df_weak = df[df["event_type"]== "target/weak"]
+    ax.plot(df_weak["time"], df_weak["intensity"], c = "k", alpha = 0.7, linewidth = 1)
+
+    
 
     ax.set_ylabel("Stimuli intensity")
     ax.set_xlabel("Time (s)")
 
-
+    ax.legend()
 
     plt.savefig("fig/QUEST.png")
 
