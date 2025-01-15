@@ -58,6 +58,9 @@ class SGC_connector:
         
         self.send_command(b"?L,20$DA#")
 
+    def wakeup(self):
+        self.send_command("?*W$57#")
+
 
 
 if __name__ in "__main__":
