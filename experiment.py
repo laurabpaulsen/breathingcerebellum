@@ -12,11 +12,13 @@ from numpy.random import choice
 from pynput import keyboard  # Import pynput for keyboard handling
 from typing import Union
 
+from .SGC_connector import SGC_connector
+
 
 class Experiment:
     def __init__(
             self, 
-            ISIS = [1.2, 1.5, 1.8], 
+            ISIS = [None, 1.5, None], 
             order = [0, 1, 0, 2, 1, 0, 2, 1, 0 ,2, 0, 1],
             n_sequences: int = 10, 
             prop_weak_omis: list = [0.9, 0.1], 
@@ -29,8 +31,14 @@ class Experiment:
             trigger_duration = 0.001, 
             reset_QUEST: Union[int, bool] = False, # how many blocks before resetting QUEST
             ISI_adjustment_factor: float = 0.1,
-            logfile: Path = Path("data.csv")
-    ):
+            logfile: Path = Path("data.csv"),
+            SGC_connector: SGC_connector = None
+            ):
+        """
+        
+        
+        """
+        
         self.ISIs = ISIS
         self.reset_QUEST = reset_QUEST
         self.logfile = logfile
@@ -60,6 +68,7 @@ class Experiment:
         self.QUEST_target = QUEST_target 
         self.QUEST_reset()
         self.update_weak_intensity()
+        self.SGC_connector = SGC_connector
 
     def setup_experiment(self):
         for block_idx, block in enumerate(self.order):
@@ -192,7 +201,7 @@ class Experiment:
                             )
                         
                         if trial["type"] == "target/weak":
-                            self.QUEST.addResponse(correct)
+                            self.QUEST.addResponse(correct, intensity = intensity)
 
                             # update intensities based on QUEST
                             self.update_weak_intensity()
@@ -249,9 +258,12 @@ class Experiment:
         """Reset the QUEST procedure."""
         self.QUEST = QuestHandler(
             startVal=self.QUEST_start_val,  # Initial guess for intensity
-            startValSd=0.2,  # Standard deviation of the initial guess
+            startValSd=0.2,  # Standard deviation
+            minVal=0,
+            maxVal=4,
             pThreshold=self.QUEST_target,  # Target probability threshold (e.g., 75% detection)
-            nTrials=100,  # Total number of trials
+            stepType = "log",
+            nTrials=None,  # Total number of trials
             beta=3.5,  # Slope of the psychometric function
             gamma=0.5,  # Guess rate (e.g., 50% for a 2-alternative forced choice task)
             delta=0.01  # Lapse rate (probability of missing a stimulus even if it's detectable)
@@ -262,7 +274,12 @@ class Experiment:
         """
         Update the weak intensity based on the QUEST procedure!
         """
-        self.intensities["weak"] = self.QUEST.next()
+        proposed_intensity = self.QUEST.next()
+        
+
+        ## NOTE: GET THE CLOSEST VALUE THAT IS POSSIBLE WITH SCG and update
+
+        self.intensities["weak"] = proposed_intensity 
 
         #if len(self.correct) > 0:
         #    p_correct = sum(self.correct) / len(self.correct)
@@ -310,13 +327,25 @@ if __name__ == "__main__":
         "response/weak/incorrect": response_bit + omis_bit + incorrect, 
         }
 
+
+    # connect to the stimulus current generator
+    connector = SGC_connector(
+        intensity_codes_path=Path("intensity_code.csv"),
+        start_intensity=1
+    )
+
+    connector.set_pulse_duration(200)
+    connector.set_trigger_delay(0)
+
+
     experiment = Experiment(
-        n_sequences=7,
+        n_sequences=10,
         reset_QUEST=3, # reset QUEST every x blocks
-        ISIS=[1, 0.7, 1],
+        ISIS=[None, 0.7, None],
         trigger_mapping=trigger_mapping,
         prop_weak_omis=[0.9, 0.1],
-        logfile = Path("output/test.csv")
+        logfile = Path("output/test.csv"),
+        #SGC_connector=connector
     )
     
     experiment.run()
