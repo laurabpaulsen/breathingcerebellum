@@ -12,7 +12,7 @@ from numpy.random import choice
 from pynput import keyboard  # Import pynput for keyboard handling
 from typing import Union
 
-from .SGC_connector import SGC_connector
+from SGC_connector import SGC_connector
 
 
 class Experiment:
@@ -21,6 +21,7 @@ class Experiment:
             ISIS = [None, 1.5, None], 
             order = [0, 1, 0, 2, 1, 0, 2, 1, 0 ,2, 0, 1],
             n_sequences: int = 10, 
+            resp_n_sequences:int = 3, 
             prop_weak_omis: list = [0.9, 0.1], 
             trigger_mapping: dict = {
                 "target/weak": 100, "stim/salient": 2, "target/omis": 200, 
@@ -43,6 +44,7 @@ class Experiment:
         self.reset_QUEST = reset_QUEST
         self.logfile = logfile
         self.n_sequences = n_sequences
+        self.resp_n_sequences = resp_n_sequences
         self.order = order
         self.trigger_mapping = trigger_mapping
         self.prop_weak_omis = prop_weak_omis
@@ -116,14 +118,14 @@ class Experiment:
         Runs a set of sequences with same ISI as block B to determine respiratory rate during task
         """
 
-        events = self.event_sequence(3, self.ISIs[1], self.prop_weak_omis, block_idx = "det_respiratory_rate")
+        events = self.event_sequence(self.resp_n_sequences, self.ISIs[1], self.prop_weak_omis, block_idx = "det_respiratory_rate")
 
         self.loop_over_events(events, start_time, log_file)
 
         # get input from user on respiratory rate
         respiratory_rate = self.get_user_input_respiratory_rate()
 
-        # update ISI for block A and C (-+ 10 percent of the respiratory rate of block B)
+        # update ISI for block A and C (-+ xxx percent of the respiratory rate of block B)
         self.adjust_ISI(respiratory_rate)
 
     def get_user_input_respiratory_rate(self):
@@ -288,6 +290,21 @@ class Experiment:
         #    else:
         #        self.intensities["weak"] -= 0.02
 
+    def estimate_duration(self) -> float:
+        """
+        Estimate the total duration of the experiment in seconds, assuming all ISIs have a mean of ISI[1].
+        
+        Returns:
+            float: Estimated duration of the experiment in seconds.
+        """
+        mean_ISI = self.ISIs[1]  # Use the mean ISI
+        n_events_per_sequence = 3 + 1  # 3 salient stimuli + 1 target stimulus per sequence
+        total_events = n_events_per_sequence * (self.n_sequences * len(self.order) + self.resp_n_sequences)
+        
+        # Total time is events * ISI + trigger durations
+        total_duration = (total_events * mean_ISI) 
+        
+        return total_duration
 
     def run(self):
         self.start_listener()  # Start the keyboard listener
@@ -329,13 +346,14 @@ if __name__ == "__main__":
 
 
     # connect to the stimulus current generator
-    connector = SGC_connector(
-        intensity_codes_path=Path("intensity_code.csv"),
-        start_intensity=1
-    )
+    #connector = SGC_connector(
+    #    port = "USB_uuuuu",
+    #    intensity_codes_path=Path("intensity_code.csv"),
+    #    start_intensity=1
+    #)
 
-    connector.set_pulse_duration(200)
-    connector.set_trigger_delay(0)
+    #connector.set_pulse_duration(200)
+    #connector.set_trigger_delay(0)
 
 
     experiment = Experiment(
@@ -348,4 +366,7 @@ if __name__ == "__main__":
         #SGC_connector=connector
     )
     
+    duration = experiment.estimate_duration()
+    print(f"The experiment is estimated to last {duration} seconds")
+
     experiment.run()
