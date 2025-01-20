@@ -4,10 +4,11 @@ import serial
 import csv
 
 class SGC_connector:
-    def __init__(self, intensity_codes_path:Path, start_intensity = 1):
+    def __init__(self, port, intensity_codes_path:Path, start_intensity = 1):
         
         self.command_lookup = self.prep_intensity_codes_lookup(intensity_codes_path)
         self.current_intensity = start_intensity
+        self.serialport = self.open_serial_port(port=port)
 
 
     def prep_intensity_codes_lookup(self, path):
