@@ -4,14 +4,13 @@ NOTES: do we want to record button presses outside of the target window? Sanity 
 
 from pathlib import Path
 import time
-from tqdm import tqdm
 from triggers import setParallelData
 from psychopy.clock import CountdownTimer
-from psychopy.data import QuestHandler
+from psychopy.data import QuestPlusHandler
 from numpy.random import choice
 from pynput import keyboard  # Import pynput for keyboard handling
 from typing import Union
-
+import numpy as np
 from SGC_connector import SGC_connector
 
 
@@ -23,17 +22,17 @@ class Experiment:
             n_sequences: int = 10, 
             resp_n_sequences:int = 3, 
             prop_weak_omis: list = [0.9, 0.1], 
+            intensities = {"salient": 4.0, "weak": 2.0},
             trigger_mapping: dict = {
                 "target/weak": 100, "stim/salient": 2, "target/omis": 200, 
                 "response/left": 1000, "response/right": 1000,
             },
             QUEST_target: float = 0.75,
-            QUEST_start_val = 2,
             trigger_duration = 0.001, 
             reset_QUEST: Union[int, bool] = False, # how many blocks before resetting QUEST
             ISI_adjustment_factor: float = 0.1,
             logfile: Path = Path("data.csv"),
-            SGC_connector: SGC_connector = None
+            SGC_connector = None
             ):
         """
         
@@ -65,11 +64,11 @@ class Experiment:
         }
         
         # QUEST parameters
-        self.QUEST_start_val = QUEST_start_val 
-        self.intensities =  {"salient": 4, "weak": self.QUEST_start_val} # NOTE: do we want to reset QUEST with the startvalue or start from a percentage of the weak intensity stimulation?
+        
+        self.intensities =  intensities # NOTE: do we want to reset QUEST with the startvalue or start from a percentage of the weak intensity stimulation?
+        self.QUEST_start_val = intensities["weak"]
         self.QUEST_target = QUEST_target 
         self.QUEST_reset()
-        self.update_weak_intensity()
         self.SGC_connector = SGC_connector
 
     def setup_experiment(self):
@@ -79,7 +78,6 @@ class Experiment:
             # check if QUEST needs to be reset in this block
             if self.reset_QUEST and block_idx % self.reset_QUEST == 0 and block_idx != 0:
                 reset = int( self.n_sequences/2) # half way through the block
-                print(block_idx, reset)
             else:
                 reset = False
         
@@ -155,14 +153,17 @@ class Experiment:
 
     
     def loop_over_events(self, events: list[dict], start_time: float, log_file):
-        for trial in tqdm(events):
-            trigger = self.trigger_mapping[trial["type"]]
-            ISI = trial["ISI"]
-            n_in_block = trial["n_in_block"]
+        for i, trial in enumerate(events):
+            print(i, trial["type"])
+            trigger, ISI, n_in_block = self.trigger_mapping[trial["type"]], trial["ISI"], trial["n_in_block"]
             intensity = self.intensities.get(trial["type"].split('/')[1], 0)
 
             event_time = time.perf_counter() - start_time
-            self.raise_and_lower_trigger(trigger)  # Send trigger
+            #self.raise_and_lower_trigger(trigger)  # Send trigger
+            # deliver pulse
+            if self.SGC_connector and intensity != 0:
+                self.SGC_connector.send_pulse()
+            
             self.log_event(
                 event_time = event_time, 
                 block=trial['block'], 
@@ -180,7 +181,17 @@ class Experiment:
 
             target_time = event_time + ISI + start_time
             response_given = False # to keep track of whether a response has been given
-    
+            
+            if trial["type"] == "target/weak": # after sending the trigger for the weak target stimulation change the intensity to the salient intensity
+                self.SGC_connector.change_intensity(self.intensities["salient"])
+
+            # check if next stimuli is weak, then lower!
+            try:
+                if events[i+1]["type"] == "target/weak":
+                    self.SGC_connector.change_intensity(self.intensities["weak"])
+            except(IndexError):
+                pass
+
             while time.perf_counter() < target_time:
                 # check for key press during target window
                 if self.target_active and not response_given:
@@ -204,8 +215,6 @@ class Experiment:
                         
                         if trial["type"] == "target/weak":
                             self.QUEST.addResponse(correct, intensity = intensity)
-
-                            # update intensities based on QUEST
                             self.update_weak_intensity()
 
                         # check if QUEST should be reset
@@ -258,6 +267,20 @@ class Experiment:
 
     def QUEST_reset(self):
         """Reset the QUEST procedure."""
+        self.QUEST = QuestPlusHandler(
+            startIntensity=self.QUEST_start_val,  # Initial guess for intensity
+            intensityVals = np.arange(1.0, 4.1, 0.1),
+            thresholdVals=np.arange(1.0, 4.1, 0.1),#self.QUEST_target,  # Target probability threshold (e.g., 75% detection) NOTE: not sure this is true???
+            stimScale = "linear",
+            responseVals = (1, 0), # success full, miss
+            nTrials=None,  # Total number of trials
+            slopeVals=2,  # Slope of the psychometric function?? (how much does intensity change)
+            lowerAsymptoteVals=0.5,  # Guess rate (e.g., 50% for a 2-alternative forced choice task)
+            lapseRateVals=0.05  # Lapse rate (probability of missing a stimulus even if it's detectable)
+        )
+
+        self.update_weak_intensity()
+        """
         self.QUEST = QuestHandler(
             startVal=self.QUEST_start_val,  # Initial guess for intensity
             startValSd=0.2,  # Standard deviation
@@ -270,25 +293,14 @@ class Experiment:
             gamma=0.5,  # Guess rate (e.g., 50% for a 2-alternative forced choice task)
             delta=0.01  # Lapse rate (probability of missing a stimulus even if it's detectable)
         )
-
+        """
 
     def update_weak_intensity(self):
         """
         Update the weak intensity based on the QUEST procedure!
         """
         proposed_intensity = self.QUEST.next()
-        
-
-        ## NOTE: GET THE CLOSEST VALUE THAT IS POSSIBLE WITH SCG and update
-
-        self.intensities["weak"] = proposed_intensity 
-
-        #if len(self.correct) > 0:
-        #    p_correct = sum(self.correct) / len(self.correct)
-        #    if p_correct > self.QUEST_target:
-        #        self.intensities["weak"] += 0.02
-        #    else:
-        #        self.intensities["weak"] -= 0.02
+        self.intensities["weak"] = round(proposed_intensity, 1)
 
     def estimate_duration(self) -> float:
         """
@@ -346,24 +358,24 @@ if __name__ == "__main__":
 
 
     # connect to the stimulus current generator
-    #connector = SGC_connector(
-    #    port = "USB_uuuuu",
-    #    intensity_codes_path=Path("intensity_code.csv"),
-    #    start_intensity=1
-    #)
+    connector = SGC_connector(
+        port = "/dev/tty.usbserial-A50027Ed",
+        intensity_codes_path=Path("intensity_code.csv"),
+        start_intensity=1
+    )
 
-    #connector.set_pulse_duration(200)
+    connector.set_pulse_duration(200)
     #connector.set_trigger_delay(0)
 
 
     experiment = Experiment(
         n_sequences=10,
         reset_QUEST=3, # reset QUEST every x blocks
-        ISIS=[None, 0.7, None],
+        ISIS=[None, 1, None],
         trigger_mapping=trigger_mapping,
-        prop_weak_omis=[0.9, 0.1],
-        logfile = Path("output/test.csv"),
-        #SGC_connector=connector
+        prop_weak_omis=[0.7, 0.3],
+        logfile = Path("output/test_SGC.csv"),
+        SGC_connector=connector
     )
     
     duration = experiment.estimate_duration()
