@@ -17,7 +17,7 @@ from SGC_connector import SGC_connector
 class Experiment:
     def __init__(
             self, 
-            ISIS = [None, 1.5, None], 
+            mean_ISI:float = 1.5,
             order = [0, 1, 0, 2, 1, 0, 2, 1, 0 ,2, 0, 1],
             n_sequences: int = 10, 
             resp_n_sequences:int = 3, 
@@ -35,11 +35,65 @@ class Experiment:
             SGC_connector = None
             ):
         """
+        Initializes the parameters and attributes for the experimental paradigm.
+
+        Parameters
+        ----------
+        mean_ISI : float, optional
+            The average interstimulus interval (B). This is value is used to calculate the ISI in A and C together with the respiratory rate.
+            Defaults to 1.5.
         
+        order : list, optional
+            The sequence order of stimuli types in the experiment, represented as 
+            indices (0, 1, 2, etc.). Defaults to [0, 1, 0, 2, 1, 0, 2, 1, 0, 2, 0, 1].
         
+        n_sequences : int, optional
+            Number of sequences in each block. Defaults to 10.
+        
+        resp_n_sequences : int, optional
+            Number of sequences used to determine respiratiory rate.
+        
+        prop_weak_omis : list, optional
+            Proportions of weak and omission trials (target/weak and target/omis).
+            Defaults to [0.9, 0.1].
+        
+        intensities : dict, optional
+            A dictionary mapping stimulus types ("salient", "weak") to intensity values.
+            Defaults to {"salient": 4.0, "weak": 2.0}.
+        
+        trigger_mapping : dict, optional
+            A mapping of stimulus and response types to specific trigger values sent
+            during the experiment.
+        
+        QUEST_target : float, optional
+            Target proportion of correct responses for QUEST to adjust intensity.
+            Defaults to 0.75.
+        
+        trigger_duration : float, optional
+            Duration of the trigger signal, in seconds. Defaults to 0.001.
+        
+        reset_QUEST : int or bool, optional
+            Determines if and how frequently the QUEST algorithm should reset.
+            Set to an integer for resets every X blocks or False to disable resetting.
+            Defaults to False.
+        
+        ISI_adjustment_factor : float, optional
+            Factor for adjusting inter-stimulus intervals dynamically based on respiratory rate. Defaults to 0.1.
+        
+        logfile : Path, optional
+            Path to the log file for saving experimental data. Defaults to Path("data.csv").
+        
+        SGC_connector : object, optional
+            Connector object for interfacing with the stimulation hardware. Defaults to None.
+
+        Returns
+        -------
+        None
         """
         
-        self.ISIs = ISIS
+        
+        
+        self.ISIs = [None, mean_ISI, None]
         self.reset_QUEST = reset_QUEST
         self.logfile = logfile
         self.n_sequences = n_sequences
@@ -64,12 +118,13 @@ class Experiment:
         }
         
         # QUEST parameters
-        
-        self.intensities =  intensities # NOTE: do we want to reset QUEST with the startvalue or start from a percentage of the weak intensity stimulation?
-        self.QUEST_start_val = intensities["weak"]
+        self.intensities =  intensities 
+        self.QUEST_start_val = intensities["weak"] # NOTE: do we want to reset QUEST with the startvalue or start from a percentage of the weak intensity stimulation?
         self.QUEST_target = QUEST_target 
         self.QUEST_reset()
         self.SGC_connector = SGC_connector
+
+        self.VALID_KEYS = ['1', '2', 'y', 'b']
 
     def setup_experiment(self):
         for block_idx, block in enumerate(self.order):
@@ -77,7 +132,7 @@ class Experiment:
 
             # check if QUEST needs to be reset in this block
             if self.reset_QUEST and block_idx % self.reset_QUEST == 0 and block_idx != 0:
-                reset = int( self.n_sequences/2) # half way through the block
+                reset = int( self.n_sequences/2) # approximately halfway through the block
             else:
                 reset = False
         
@@ -96,7 +151,7 @@ class Experiment:
         for seq in range(n_sequences):
             for _ in range(n_salient):
                 event_counter_in_block += 1
-                events.append({"ISI": ISI, "type": "stim/salient", "n_in_block": event_counter_in_block, "block": block_idx, "reset_QUEST": False})
+                events.append({"ISI": ISI, "event_type": "stim/salient", "n_in_block": event_counter_in_block, "block": block_idx, "reset_QUEST": False})
             
             event_counter_in_block += 1
             event_type = choice(["weak", "omis"], 1, p=prop_weak_omis)
@@ -106,19 +161,19 @@ class Experiment:
                 
             else:
                 reset = False
-            events.append({"ISI": ISI, "type": f"target/{event_type[0]}", "n_in_block": event_counter_in_block, "block": block_idx, "reset_QUEST": reset})
+            events.append({"ISI": ISI, "event_type": f"target/{event_type[0]}", "n_in_block": event_counter_in_block, "block": block_idx, "reset_QUEST": reset})
 
         return events
 
 
-    def determine_respiratory_rate(self, start_time, log_file):
+    def determine_respiratory_rate(self, log_file):
         """
         Runs a set of sequences with same ISI as block B to determine respiratory rate during task
         """
 
         events = self.event_sequence(self.resp_n_sequences, self.ISIs[1], self.prop_weak_omis, block_idx = "det_respiratory_rate")
 
-        self.loop_over_events(events, start_time, log_file)
+        self.loop_over_events(events, log_file)
 
         # get input from user on respiratory rate
         respiratory_rate = self.get_user_input_respiratory_rate()
@@ -139,7 +194,7 @@ class Experiment:
 
         return respiratory_rate
 
-    def adjust_ISI(self, rate):
+    def adjust_ISI(self, rate:float) -> None:
         """
         Adjust ISI for block A and C based on respiratory rate in block B and respiratory rate
         """
@@ -147,49 +202,55 @@ class Experiment:
         self.ISIs[2] = self.ISIs[1] + self.ISI_adjustment_factor * rate
 
         print(f"ISI for block A: {self.ISIs[0]}, ISI for block C: {self.ISIs[2]} after adjustment based on respiratory rate {rate}")
-    
-    def log_event(self, event_time, block, ISI, intensity, event_type, trigger, n_in_block, correct, log_file):
-            log_file.write(f"{event_time},{block},{ISI},{intensity},{event_type},{trigger},{n_in_block},{correct}\n")
+
+        # validate that ISIS are within a reasonable range
+        if any([ISI < 0 for ISI in self.ISIs]):
+            print("Warning: ISI is negative, please check the input respiratory rate and adjustment factor")
 
     
-    def loop_over_events(self, events: list[dict], start_time: float, log_file):
+    def log_event(self, event_time, block, ISI, intensity, event_type, trigger, n_in_block, correct, reset_QUEST, log_file):
+        log_file.write(f"{event_time},{block},{ISI},{intensity},{event_type},{trigger},{n_in_block},{correct}, {reset_QUEST}\n")
+
+    def handle_target_event(self, trial: dict, events: list[dict], event_time: float, intensity: float, log_file: Path):
+        pass
+    
+    def loop_over_events(self, events: list[dict], log_file):
         for i, trial in enumerate(events):
-            print(i, trial["type"])
-            trigger, ISI, n_in_block = self.trigger_mapping[trial["type"]], trial["ISI"], trial["n_in_block"]
-            intensity = self.intensities.get(trial["type"].split('/')[1], 0)
+            intensity = self.intensities.get(trial["event_type"].split('/')[1], 0)
 
-            event_time = time.perf_counter() - start_time
+            
             #self.raise_and_lower_trigger(trigger)  # Send trigger
             # deliver pulse
             if self.SGC_connector and intensity != 0:
                 self.SGC_connector.send_pulse()
             
+            event_time = time.perf_counter() - self.start_time
+            
             self.log_event(
-                event_time = event_time, 
-                block=trial['block'], 
-                ISI=trial['ISI'], 
-                intensity=intensity, 
-                event_type=trial["type"], 
-                trigger=trigger,
-                n_in_block= n_in_block, 
-                correct="NA", log_file = log_file
+                **trial,
+                event_time = event_time,
+                intensity=intensity,
+                trigger=self.trigger_mapping[trial["event_type"]], 
+                correct="NA",
+                log_file = log_file
                 )
-            print(f"Event: {trial['type']}, intensity: {intensity}")
+            
+            print(f"Event: {trial['event_type']}, intensity: {intensity}")
 
             # Check if this is a target event
-            self.target_active = "target" in trial["type"]
+            self.target_active = "target" in trial["event_type"]
 
-            target_time = event_time + ISI + start_time
+            target_time = event_time + trial["ISI"] + self.start_time
             response_given = False # to keep track of whether a response has been given
             
-            if trial["type"] == "target/weak": # after sending the trigger for the weak target stimulation change the intensity to the salient intensity
+            if trial["event_type"] == "target/weak": # after sending the trigger for the weak target stimulation change the intensity to the salient intensity
                 self.SGC_connector.change_intensity(self.intensities["salient"])
 
             # check if next stimuli is weak, then lower!
             try:
-                if events[i+1]["type"] == "target/weak":
+                if events[i+1]["event_type"] == "target/weak":
                     self.SGC_connector.change_intensity(self.intensities["weak"])
-            except(IndexError):
+            except IndexError:
                 pass
 
             while time.perf_counter() < target_time:
@@ -197,23 +258,22 @@ class Experiment:
                 if self.target_active and not response_given:
                     key = self.get_response()
                     if key:
-                        correct, response_trigger = self.correct_or_incorrect(key, trial["type"])
+                        correct, response_trigger = self.correct_or_incorrect(key, trial["event_type"])
                         print(f"Response: {key}, Correct: {correct}")
                         self.raise_and_lower_trigger(response_trigger) 
                         response_given = True
+                        trial["event_type"] = "response"
+                        
                         self.log_event(
-                            event_time=time.perf_counter() - start_time, 
-                            block=trial['block'], 
-                            ISI=trial['ISI'], 
+                            **trial,
+                            event_time=time.perf_counter() - self.start_time, 
                             intensity=intensity, 
-                            event_type="response", 
                             trigger=response_trigger, 
-                            n_in_block=n_in_block, 
                             correct=correct, 
                             log_file = log_file
                             )
                         
-                        if trial["type"] == "target/weak":
+                        if trial["event_type"] == "target/weak":
                             self.QUEST.addResponse(correct, intensity = intensity)
                             self.update_weak_intensity()
 
@@ -235,14 +295,10 @@ class Experiment:
         setParallelData(0)
 
     def on_press(self, key):
-        """Callback for key press events."""
-        try:
-            key_name = key.char  # alphanumeric keys
-        except AttributeError:
-            key_name = str(key)  # special keys
-        if self.target_active and key_name in ['1', '2', 'y', 'b']:  # only capture specific keys during target
+        key_name = getattr(key, 'char', str(key))  # safer retrieval
+        if self.target_active and key_name in self.VALID_KEYS:
             self.key_pressed = key_name
-
+    
     def start_listener(self):
         """Start the keyboard listener."""
         self.listener = keyboard.Listener(on_press=self.on_press)
@@ -268,9 +324,9 @@ class Experiment:
     def QUEST_reset(self):
         """Reset the QUEST procedure."""
         self.QUEST = QuestPlusHandler(
-            startIntensity=self.QUEST_start_val,  # Initial guess for intensity
-            intensityVals = np.arange(1.0, 4.1, 0.1),
-            thresholdVals=np.arange(1.0, 4.1, 0.1),#self.QUEST_target,  # Target probability threshold (e.g., 75% detection) NOTE: not sure this is true???
+            startIntensity = self.QUEST_start_val,  # Initial guess for intensity
+            intensityVals = [round(intensity, 1) for intensity in np.arange(1.0, 4.1, 0.1)],
+            thresholdVals = [round(intensity, 1) for intensity in np.arange(1.0, 4.1, 0.1)],#self.QUEST_target,  # Target probability threshold (e.g., 75% detection) NOTE: not sure this is true???
             stimScale = "linear",
             responseVals = (1, 0), # success full, miss
             nTrials=None,  # Total number of trials
@@ -322,17 +378,17 @@ class Experiment:
         self.start_listener()  # Start the keyboard listener
         self.logfile.parent.mkdir(parents=True, exist_ok=True)  # Ensure log directory exists
 
-        start_time = time.perf_counter()
+        self.start_time = time.perf_counter()
        
         with open(self.logfile, 'w') as log_file:
-            log_file.write("time,block,ISI,intensity,event_type,trigger,n_in_block,correct\n")
+            log_file.write("time,block,ISI,intensity,event_type,trigger,n_in_block,correct, QUEST_reset\n")
             
             # determine the respiratory rate during block B
-            self.determine_respiratory_rate(start_time, log_file)
+            self.determine_respiratory_rate(log_file)
 
             # run the experiment
             self.setup_experiment()
-            self.loop_over_events(self.events, start_time, log_file)
+            self.loop_over_events(self.events, log_file)
 
         self.stop_listener()  # Stop the keyboard listener
 
@@ -369,9 +425,9 @@ if __name__ == "__main__":
 
 
     experiment = Experiment(
-        n_sequences=10,
+        n_sequences=5,
         reset_QUEST=3, # reset QUEST every x blocks
-        ISIS=[None, 1, None],
+        mean_ISI=1.,
         trigger_mapping=trigger_mapping,
         prop_weak_omis=[0.7, 0.3],
         logfile = Path("output/test_SGC.csv"),
