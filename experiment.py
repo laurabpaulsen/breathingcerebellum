@@ -6,7 +6,7 @@ from pathlib import Path
 import time
 from triggers import setParallelData
 from psychopy.clock import CountdownTimer
-from psychopy.data import QuestPlusHandler
+from psychopy.data import QuestPlusHandler, QuestHandler
 from numpy.random import choice
 from pynput import keyboard  # Import pynput for keyboard handling
 from typing import Union
@@ -22,14 +22,15 @@ class Experiment:
             n_sequences: int = 10, 
             resp_n_sequences:int = 3, 
             prop_weak_omis: list = [0.9, 0.1], 
-            intensities = {"salient": 4.0, "weak": 2.0},
+            intensities = {"salient": 6.0, "weak": 2.0},
             trigger_mapping: dict = {
                 "target/weak": 100, "stim/salient": 2, "target/omis": 200, 
                 "response/left": 1000, "response/right": 1000,
             },
-            QUEST_target: float = 0.75,
             trigger_duration = 0.001, 
+            QUEST_target: float = 0.75,
             reset_QUEST: Union[int, bool] = False, # how many blocks before resetting QUEST
+            QUEST_plus: bool = True,
             ISI_adjustment_factor: float = 0.1,
             logfile: Path = Path("data.csv"),
             SGC_connector = None
@@ -120,6 +121,8 @@ class Experiment:
         # QUEST parameters
         self.intensities =  intensities 
         self.QUEST_start_val = intensities["weak"] # NOTE: do we want to reset QUEST with the startvalue or start from a percentage of the weak intensity stimulation?
+        self.max_intensity_weak = intensities["salient"] - 1.0
+        self.QUEST_plus = QUEST_plus
         self.QUEST_target = QUEST_target 
         self.QUEST_reset()
         self.SGC_connector = SGC_connector
@@ -211,8 +214,6 @@ class Experiment:
     def log_event(self, event_time, block, ISI, intensity, event_type, trigger, n_in_block, correct, reset_QUEST, log_file):
         log_file.write(f"{event_time},{block},{ISI},{intensity},{event_type},{trigger},{n_in_block},{correct}, {reset_QUEST}\n")
 
-    def handle_target_event(self, trial: dict, events: list[dict], event_time: float, intensity: float, log_file: Path):
-        pass
     
     def loop_over_events(self, events: list[dict], log_file):
         for i, trial in enumerate(events):
@@ -273,9 +274,9 @@ class Experiment:
                             log_file = log_file
                             )
                         
-                        if trial["event_type"] == "target/weak":
-                            self.QUEST.addResponse(correct, intensity = intensity)
-                            self.update_weak_intensity()
+                        
+                        self.QUEST.addResponse(correct, intensity = intensity)
+                        self.update_weak_intensity()
 
                         # check if QUEST should be reset
                         if trial["reset_QUEST"]:
@@ -323,39 +324,48 @@ class Experiment:
 
     def QUEST_reset(self):
         """Reset the QUEST procedure."""
-        self.QUEST = QuestPlusHandler(
-            startIntensity = self.QUEST_start_val,  # Initial guess for intensity
-            intensityVals = [round(intensity, 1) for intensity in np.arange(1.0, 4.1, 0.1)],
-            thresholdVals = [round(intensity, 1) for intensity in np.arange(1.0, 4.1, 0.1)],#self.QUEST_target,  # Target probability threshold (e.g., 75% detection) NOTE: not sure this is true???
-            stimScale = "linear",
-            responseVals = (1, 0), # success full, miss
-            nTrials=None,  # Total number of trials
-            slopeVals=2,  # Slope of the psychometric function?? (how much does intensity change)
-            lowerAsymptoteVals=0.5,  # Guess rate (e.g., 50% for a 2-alternative forced choice task)
-            lapseRateVals=0.05  # Lapse rate (probability of missing a stimulus even if it's detectable)
-        )
 
-        self.update_weak_intensity()
-        """
-        self.QUEST = QuestHandler(
+        if self.QUEST_plus:
+            self.QUEST = QuestPlusHandler(
+                startIntensity = self.QUEST_start_val,  # Initial guess for intensity
+                intensityVals = [round(intensity, 1) for intensity in np.arange(1.0, self.max_intensity_weak, 0.1)],
+                thresholdVals = [round(intensity, 1) for intensity in np.arange(1.0, self.max_intensity_weak, 0.1)],
+                stimScale = "linear",
+                responseVals = (1, 0), # success full, miss
+                nTrials=None,  # Total number of trials
+                slopeVals=2,  # Slope of the psychometric function?? (how much does intensity change)
+                lowerAsymptoteVals=0.5,  # Guess rate (e.g., 50% for a 2-alternative forced choice task)
+                lapseRateVals=0.05  # Lapse rate (probability of missing a stimulus even if it's detectable)
+            )
+        else:
+            self.QUEST = QuestHandler(
             startVal=self.QUEST_start_val,  # Initial guess for intensity
             startValSd=0.2,  # Standard deviation
-            minVal=0,
-            maxVal=4,
+            minVal=1.0,
+            maxVal=self.max_intensity_weak,
             pThreshold=self.QUEST_target,  # Target probability threshold (e.g., 75% detection)
-            stepType = "log",
-            nTrials=None,  # Total number of trials
+            stepType = "linear",
+            nTrials=100,  # Total number of trials
             beta=3.5,  # Slope of the psychometric function
             gamma=0.5,  # Guess rate (e.g., 50% for a 2-alternative forced choice task)
             delta=0.01  # Lapse rate (probability of missing a stimulus even if it's detectable)
         )
-        """
+        
+        self.update_weak_intensity()
 
     def update_weak_intensity(self):
         """
         Update the weak intensity based on the QUEST procedure!
         """
-        proposed_intensity = self.QUEST.next()
+        print("updating weak intensity")
+        if self.QUEST_plus:
+            
+            proposed_intensity = self.QUEST.next()
+
+        else:
+            proposed_intensity = self.QUEST.next()
+            print("proposed intensity: ", proposed_intensity, "current intensity: ", self.intensities["weak"])
+
         self.intensities["weak"] = round(proposed_intensity, 1)
 
     def estimate_duration(self) -> float:
