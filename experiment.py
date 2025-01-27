@@ -357,15 +357,9 @@ class Experiment:
         """
         Update the weak intensity based on the QUEST procedure!
         """
-        print("updating weak intensity")
-        if self.QUEST_plus:
+  
             
-            proposed_intensity = self.QUEST.next()
-
-        else:
-            proposed_intensity = self.QUEST.next()
-            print("proposed intensity: ", proposed_intensity, "current intensity: ", self.intensities["weak"])
-
+        proposed_intensity = self.QUEST.next()
         self.intensities["weak"] = round(proposed_intensity, 1)
 
     def estimate_duration(self) -> float:
