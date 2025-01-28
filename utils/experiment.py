@@ -16,7 +16,7 @@ class Experiment:
     def __init__(
             self, 
             trigger_mapping: dict,
-            mean_ISI:float = 1.5,
+            mean_ISI:float = 1.45,
             order = [0, 1, 0, 2, 1, 0, 2, 1, 0 ,2, 0, 1],
             n_sequences: int = 10, 
             resp_n_sequences:int = 3, 
@@ -275,26 +275,45 @@ class Experiment:
 
             # stop listening for responses
             self.listener.active = False
-        pass
 
     def log_event(self, event_time, block, ISI, intensity, event_type, trigger, n_in_block, correct, reset_QUEST, log_file):
         log_file.write(f"{event_time},{block},{ISI},{intensity},{event_type},{trigger},{n_in_block},{correct}, {reset_QUEST}\n")
-
+    
     def determine_respiratory_rate(self, log_file):
         """
         Runs a set of sequences with same ISI as block B to determine respiratory rate during task
         """
-
-        events = self.event_sequence(self.resp_n_sequences, self.ISIs[1], block_idx = "det_respiratory_rate")
-
+        events = self.event_sequence(self.resp_n_sequences, self.ISIs[1], block_idx="det_respiratory_rate")
         self.loop_over_events(events, log_file)
 
-        # get input from user on respiratory rate
-        respiratory_rate = self.get_user_input_respiratory_rate()
+        # Keep prompting the user until valid ISIs are calculated
+        while True:
+            respiratory_rate = self.get_user_input_respiratory_rate()
+            
+            # Adjust ISIs based on input rate
+            self.adjust_ISI(respiratory_rate)
+            
+            # Validate ISIs
+            if self.validate_ISI():
+                break  # Exit loop if ISIs are valid
 
-        # update ISI for block A and C (-+ xxx percent of the respiratory rate of block B)
-        self.adjust_ISI(respiratory_rate)
+    def validate_ISI(self) -> bool:
+        """
+        Validate ISI values to ensure they are within a reasonable range and not multiples of 50 Hz.
+        """
+        # Check for negative ISI
+        if any(ISI < 0 for ISI in self.ISIs):
+            print("Warning: ISI is negative, please check the input respiratory rate and adjustment factor.")
+            return False
 
+        # Check if ISI matches electrical noise (50 Hz or multiple)
+        if any(abs(ISI * 50 - round(ISI * 50)) < 1e-6 for ISI in self.ISIs):
+            print("Warning: ISI is a multiple of 50 Hz, please adjust the respiratory rate.")
+            return False
+
+        print(f"Valid ISIs: {self.ISIs}")
+        return True
+    
     def get_user_input_respiratory_rate(self):
         while True:
             try:
@@ -312,6 +331,7 @@ class Experiment:
         """
         Adjust ISI for block A and C based on respiratory rate in block B and respiratory rate
         """
+        get_new_input = False
         self.ISIs[0] = self.ISIs[1] - self.ISI_adjustment_factor * rate
         self.ISIs[2] = self.ISIs[1] + self.ISI_adjustment_factor * rate
 
@@ -320,6 +340,18 @@ class Experiment:
         # validate that ISIS are within a reasonable range
         if any([ISI < 0 for ISI in self.ISIs]):
             print("Warning: ISI is negative, please check the input respiratory rate and adjustment factor")
+            get_new_input = True
+
+        # check if ISI will match electrical noise (50 hz or a multiple of 50 hz)
+        if any(abs(ISI * 50 - round(ISI * 50)) < 1e-6 for ISI in self.ISIs):
+            print("Warning: ISI is a multiple of 50 Hz, please adjust the respiratory rate or adjustment factor.")
+            get_new_input = True
+        
+        if get_new_input:
+            self.determine_respiratory_rate()
+        
+
+
 
     def raise_and_lower_trigger(self, trigger):
         setParallelData(trigger)
