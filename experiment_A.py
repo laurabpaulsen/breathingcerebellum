@@ -5,14 +5,14 @@ NOTES: do we want to record button presses outside of the target window? Sanity 
 
 from pathlib import Path
 import time
-from triggers import setParallelData
+from utils.triggers import setParallelData
 from psychopy.clock import CountdownTimer
 from psychopy.data import QuestPlusHandler, QuestHandler
 from numpy.random import choice
-from pynput import keyboard  # Import pynput for keyboard handling
 from typing import Union
 import numpy as np
-from SGC_connector import SGC_connector
+from utils.SGC_connector import SGC_connector
+from utils.responses import KeyboardListener
 
 
 class Experiment:
@@ -93,8 +93,6 @@ class Experiment:
         None
         """
         
-        
-        
         self.ISIs = [None, mean_ISI, None]
         self.reset_QUEST = reset_QUEST
         self.logfile = logfile
@@ -111,9 +109,7 @@ class Experiment:
         
         
         # for response handling 
-        self.key_pressed = None  # Variable to store the last key pressed
-        self.listener = None  # Keyboard listener instance
-        self.target_active = False  # Flag to check if target stimulus is active
+        self.listener = KeyboardListener()
         self.keys_target = {
             "omis": ['2', 'y'],
             "weak": ['1', 'b']
@@ -127,8 +123,6 @@ class Experiment:
         self.QUEST_target = QUEST_target 
         self.QUEST_reset()
         self.SGC_connector = SGC_connector
-
-        self.VALID_KEYS = ['1', '2', 'y', 'b']
 
     def setup_experiment(self):
         for block_idx, block in enumerate(self.order):
@@ -240,7 +234,7 @@ class Experiment:
             print(f"Event: {trial['event_type']}, intensity: {intensity}")
 
             # Check if this is a target event
-            self.target_active = "target" in trial["event_type"]
+            self.listener.active = "target" in trial["event_type"]
 
             target_time = event_time + trial["ISI"] + self.start_time
             response_given = False # to keep track of whether a response has been given
@@ -257,8 +251,8 @@ class Experiment:
 
             while time.perf_counter() < target_time:
                 # check for key press during target window
-                if self.target_active and not response_given:
-                    key = self.get_response()
+                if self.listener.active and not response_given:
+                    key = self.listener.get_response()
                     if key:
                         correct, response_trigger = self.correct_or_incorrect(key, trial["event_type"])
                         print(f"Response: {key}, Correct: {correct}")
@@ -275,15 +269,13 @@ class Experiment:
                             log_file = log_file
                             )
                         
-                        
-                        self.QUEST.addResponse(correct, intensity = intensity)
-                        self.update_weak_intensity()
+                        if intensity != 0: # do not update QUEST for omission trials
+                            self.QUEST.addResponse(correct, intensity = intensity)
+                            self.update_weak_intensity()
 
                         # check if QUEST should be reset
                         if trial["reset_QUEST"]:
                             self.QUEST_reset()
-                            print("QUEST has been reset")
-                            self.update_weak_intensity()
 
             # Reset the target flag after the ISI
             self.target_active = False
@@ -295,27 +287,6 @@ class Experiment:
         while self.countdown_timer.getTime() > 0:
             pass
         setParallelData(0)
-
-    def on_press(self, key):
-        key_name = getattr(key, 'char', str(key))  # safer retrieval
-        if self.target_active and key_name in self.VALID_KEYS:
-            self.key_pressed = key_name
-    
-    def start_listener(self):
-        """Start the keyboard listener."""
-        self.listener = keyboard.Listener(on_press=self.on_press)
-        self.listener.start()
-
-    def stop_listener(self):
-        """Stop the keyboard listener."""
-        if self.listener:
-            self.listener.stop()
-
-    def get_response(self):
-        """Retrieve the last key pressed and reset the key state."""
-        response = self.key_pressed
-        self.key_pressed = None  # Reset after capturing
-        return response
     
     def correct_or_incorrect(self, key, event_type):
         if key in self.keys_target[event_type.split('/')[1]]:
@@ -341,12 +312,12 @@ class Experiment:
         else:
             self.QUEST = QuestHandler(
             startVal=self.QUEST_start_val,  # Initial guess for intensity
-            startValSd=0.2,  # Standard deviation
+            startValSd=0.5,  # Standard deviation
             minVal=1.0,
             maxVal=self.max_intensity_weak,
             pThreshold=self.QUEST_target,  # Target probability threshold (e.g., 75% detection)
             stepType = "linear",
-            nTrials=100,  # Total number of trials
+            nTrials=None,  # Total number of trials
             beta=3.5,  # Slope of the psychometric function
             gamma=0.5,  # Guess rate (e.g., 50% for a 2-alternative forced choice task)
             delta=0.01  # Lapse rate (probability of missing a stimulus even if it's detectable)
@@ -354,12 +325,12 @@ class Experiment:
         
         self.update_weak_intensity()
 
+        print("QUEST has been reset")
+
     def update_weak_intensity(self):
         """
         Update the weak intensity based on the QUEST procedure!
         """
-  
-            
         proposed_intensity = self.QUEST.next()
         self.intensities["weak"] = round(proposed_intensity, 1)
 
@@ -380,13 +351,13 @@ class Experiment:
         return total_duration
 
     def run(self):
-        self.start_listener()  # Start the keyboard listener
+        self.listener.start_listener()  # Start the keyboard listener
         self.logfile.parent.mkdir(parents=True, exist_ok=True)  # Ensure log directory exists
 
         self.start_time = time.perf_counter()
        
         with open(self.logfile, 'w') as log_file:
-            log_file.write("time,block,ISI,intensity,event_type,trigger,n_in_block,correct, QUEST_reset\n")
+            log_file.write("time,block,ISI,intensity,event_type,trigger,n_in_block,correct,QUEST_reset\n")
             
             # determine the respiratory rate during block B
             self.determine_respiratory_rate(log_file)
@@ -395,7 +366,7 @@ class Experiment:
             self.setup_experiment()
             self.loop_over_events(self.events, log_file)
 
-        self.stop_listener()  # Stop the keyboard listener
+        self.listener.stop_listener()  # Stop the keyboard listener
 
 if __name__ == "__main__":
 
@@ -435,7 +406,7 @@ if __name__ == "__main__":
         mean_ISI=1.,
         trigger_mapping=trigger_mapping,
         prop_weak_omis=[0.7, 0.3],
-        logfile = Path("output/test_SGC.csv"),
+        logfile = Path("output_a/test_SGC.csv"),
         SGC_connector=connector
     )
     
