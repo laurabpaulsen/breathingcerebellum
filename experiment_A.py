@@ -1,4 +1,5 @@
 """
+VERSION A - discriminating weak and omission targets following three salient rhythm-establishing stimuli 
 NOTES: do we want to record button presses outside of the target window? Sanity check for the experiment? 
 """
 
