@@ -44,7 +44,7 @@ class Experiment_B(Experiment):
             ISI_adjustment_factor = ISI_adjustment_factor,
             logfile = logfile)
             
-        self.SGC_connectors = SGC_connectors1
+        self.SGC_connectors = SGC_connectors
     
     def deliver_stimulus(self, event_type):
         if self.SGC_connectors: 
