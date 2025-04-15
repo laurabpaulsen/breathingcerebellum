@@ -7,12 +7,13 @@ from typing import Union
 
 # local imports
 from utils.experiment import Experiment
+from utils.SGC_connector import SGCConnector, SGCFakeConnector
 
 class Experiment_B(Experiment):
     def __init__(
             self, 
             trigger_mapping: dict,
-            mean_ISI:float = 1.5,
+            mean_ISI:float = 1.45,
             order = [0, 1, 0, 2, 1, 0, 2, 1, 0 ,2, 0, 1],
             n_sequences: int = 10, 
             resp_n_sequences:int = 3, 
@@ -85,23 +86,25 @@ if __name__ == "__main__":
         "response/right/correct": response_bit + right_bit + correct,
         "response/left/incorrect": response_bit + left_bit + incorrect, 
         }
-
-    """
-    connectors = {}
-
-    for port, side in zip(["COM3", "COM4"], ["left", "right"]):
-        connector = SGC_connector(port=port, intensity_codes_path=Path("intensity_code.csv"), start_intensity=1)
-        connector.set_pulse_duration(200)
-        #connector.set_trigger_delay(0)
-        connectors[side] = connector
     
-    """
-    connectors = None
+    start_intensities = {"salient": 4.0, "weak": 1.0} # SALIENT NEEDS TO BE AT LEAST xx BIGGER THAN 
+
+
+    connectors = {
+        "left":  SGCConnector(port="/dev/tty.usbserial-5", intensity_codes_path=Path("intensity_code.csv"), start_intensity=1),
+        "right": SGCFakeConnector(intensity_codes_path=Path("intensity_code.csv"), start_intensity=1)
+    }
+
+    for side, connector in connectors.items():
+        connector.set_pulse_duration(200)
+        connector.change_intensity(start_intensities["salient"])
+    
 
     experiment = Experiment_B(
+        intensities=start_intensities,
         n_sequences=5,
         reset_QUEST=3, # reset QUEST every x blocks
-        mean_ISI=1.,
+        mean_ISI=1.39,
         trigger_mapping=trigger_mapping,
         logfile = Path("output_b/test_SGC.csv"),
         SGC_connectors=connectors
