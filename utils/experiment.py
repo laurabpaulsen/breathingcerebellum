@@ -4,6 +4,8 @@ from numpy.random import choice
 from typing import Union
 import time
 
+import sys
+sys.path.append("..")
 
 from psychopy.clock import CountdownTimer
 from psychopy.data import QuestPlusHandler, QuestHandler
@@ -115,7 +117,7 @@ class Experiment:
         # QUEST parameters
         self.intensities =  intensities 
         self.QUEST_start_val = intensities["weak"] # NOTE: do we want to reset QUEST with the startvalue or start from a percentage of the weak intensity stimulation?
-        self.max_intensity_weak = intensities["salient"] - 1.0
+        self.max_intensity_weak = intensities["salient"] - 0.5
         self.QUEST_plus = QUEST_plus
         self.QUEST_target = QUEST_target 
         self.QUEST_reset()
@@ -164,6 +166,7 @@ class Experiment:
         """Reset the QUEST procedure."""
 
         if self.QUEST_plus:
+            
             self.QUEST = QuestPlusHandler(
                 startIntensity = self.QUEST_start_val,  # Initial guess for intensity
                 intensityVals = [round(intensity, 1) for intensity in np.arange(1.0, self.max_intensity_weak, 0.1)],
@@ -281,21 +284,15 @@ class Experiment:
     
     def determine_respiratory_rate(self, log_file):
         """
-        Runs a set of sequences with same ISI as block B to determine respiratory rate during task
+        Runs a set of sequences with same ISI as block B to determine respiratory rate during task.
         """
         events = self.event_sequence(self.resp_n_sequences, self.ISIs[1], block_idx="det_respiratory_rate")
         self.loop_over_events(events, log_file)
 
-        # Keep prompting the user until valid ISIs are calculated
         while True:
             respiratory_rate = self.get_user_input_respiratory_rate()
-            
-            # Adjust ISIs based on input rate
-            self.adjust_ISI(respiratory_rate)
-            
-            # Validate ISIs
-            if self.validate_ISI():
-                break  # Exit loop if ISIs are valid
+            if self.adjust_ISI(respiratory_rate):
+                break  # ISIs are valid, move on
 
     def validate_ISI(self) -> bool:
         """
@@ -306,10 +303,11 @@ class Experiment:
             print("Warning: ISI is negative, please check the input respiratory rate and adjustment factor.")
             return False
 
-        # Check if ISI matches electrical noise (50 Hz or multiple)
-        if any(abs(ISI * 50 - round(ISI * 50)) < 1e-6 for ISI in self.ISIs):
-            print("Warning: ISI is a multiple of 50 Hz, please adjust the respiratory rate.")
-            return False
+        # Check if ISI is close to a multiple of 1/50 (i.e., could align with 50Hz interference)
+        for ISI in self.ISIs:
+            if abs((ISI * 50) - round(ISI * 50)) < 1e-2:
+                print(f"Warning: ISI {ISI:.4f}s is too close to a multiple of 1/50s (i.e., 50 Hz), may cause electrical noise.")
+                return False
 
         print(f"Valid ISIs: {self.ISIs}")
         return True
@@ -327,29 +325,17 @@ class Experiment:
 
         return respiratory_rate
 
-    def adjust_ISI(self, rate:float) -> None:
+    def adjust_ISI(self, rate: float) -> bool:
         """
-        Adjust ISI for block A and C based on respiratory rate in block B and respiratory rate
+        Adjust ISI for block A and C based on respiratory rate in block B.
+        Returns True if ISIs are valid, False otherwise.
         """
-        get_new_input = False
         self.ISIs[0] = self.ISIs[1] - self.ISI_adjustment_factor * rate
         self.ISIs[2] = self.ISIs[1] + self.ISI_adjustment_factor * rate
 
         print(f"ISI for block A: {self.ISIs[0]}, ISI for block C: {self.ISIs[2]} after adjustment based on respiratory rate {rate}")
 
-        # validate that ISIS are within a reasonable range
-        if any([ISI < 0 for ISI in self.ISIs]):
-            print("Warning: ISI is negative, please check the input respiratory rate and adjustment factor")
-            get_new_input = True
-
-        # check if ISI will match electrical noise (50 hz or a multiple of 50 hz)
-        if any(abs(ISI * 50 - round(ISI * 50)) < 1e-6 for ISI in self.ISIs):
-            print("Warning: ISI is a multiple of 50 Hz, please adjust the respiratory rate or adjustment factor.")
-            get_new_input = True
-        
-        if get_new_input:
-            self.determine_respiratory_rate()
-        
+        return self.validate_ISI()
 
 
 
@@ -383,6 +369,9 @@ class Experiment:
         return total_duration
     
     def run(self):
+
+        # NOTE! WRITE TO LOG FILE IN THE BREAKS?
+
         self.listener.start_listener()  # Start the keyboard listener
         self.logfile.parent.mkdir(parents=True, exist_ok=True)  # Ensure log directory exists
 
