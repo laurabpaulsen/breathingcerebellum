@@ -171,4 +171,7 @@ cython_debug/
 .pypirc
 
 
-output/*
+output_a/*
+output_b/*
+
+.DS_Store
